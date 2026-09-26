@@ -1,0 +1,5 @@
+{
+  "jwt_algorithm": "RS256",
+  "content_encryption": "A128CBC-HS256",
+  "experiment_group": "ML-KEM-768"
+}

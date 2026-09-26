@@ -1,0 +1,4 @@
+{
+  "profile": "ecdsa-p256",
+  "note": "Classical profile implemented with the cryptography package. This file does not enable a post-quantum algorithm."
+}

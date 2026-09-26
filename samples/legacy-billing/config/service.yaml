@@ -1,0 +1,5 @@
+service: billing
+tls:
+  minVersion: "1.0"
+  cipherSuites:
+    - TLS_RSA_WITH_AES_128_CBC_SHA
