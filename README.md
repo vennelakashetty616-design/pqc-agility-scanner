@@ -39,7 +39,7 @@ pqcscan ci --path samples/legacy-billing --baseline baselines/legacy-billing.jso
 python -m pytest
 ```
 
-`pqcscan web` serves a local dashboard at `http://127.0.0.1:8765`. It scans the `--path` folder when the page opens, and the path box can scan any other project folder on this computer. Each finding shows the file, the line number, and the line of code. The Ask button answers questions from that same scan. `pqcscan scan --out` writes `report.md`, `report.json`, `migration-graph.mmd`, and `dashboard.html` into a folder you choose. Those generated files are not kept in the source tree.
+`pqcscan web` serves a local dashboard at `http://127.0.0.1:8765`. It scans the `--path` folder when the page opens. You can also type another folder path and upload `.txt`, `.md`, or `.pdf` files in the same scan. Results are grouped into high, medium, and low priority, each with a reason and what to do. Download report saves that summary as a Markdown file. Each finding shows the file, the line number, and the line of code. The Ask button answers questions from that same scan. PDF line numbers refer to the extracted text. `pqcscan scan --out` writes `report.md`, `report.json`, `migration-graph.mmd`, and `dashboard.html` into a folder you choose. Those generated files are not kept in the source tree.
 
 Scan your own tree the same way:
 

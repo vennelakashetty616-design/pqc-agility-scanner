@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 from pqcscan.analysis import ScanRequestError, analyze_directory
 from pqcscan.chat import answer_question
+from pqcscan.intake import scan_inputs
 from pqcscan.disclaimer import DISCLAIMER
 from pqcscan.sandbox.provider import ClassicalProvider, UnsupportedProfile, list_profiles
 
@@ -52,7 +53,7 @@ _PAGE = """<!DOCTYPE html>
   .lede { color: #d9e2ec; max-width: 70ch; }
   form {
     display: grid;
-    grid-template-columns: 1fr auto auto;
+    grid-template-columns: 1fr auto auto auto;
     gap: 8px;
     align-items: end;
     margin-top: 16px;
@@ -61,6 +62,8 @@ _PAGE = """<!DOCTYPE html>
     color: var(--ink);
     border-radius: 16px;
   }
+  .file-field { grid-column: 1 / -1; }
+  input[type="file"] { width: 100%; font-size: 14px; }
   label { display: block; font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 4px; }
   input[type="text"], #q {
     width: 100%;
@@ -74,6 +77,15 @@ _PAGE = """<!DOCTYPE html>
   button { border: 0; cursor: pointer; border-radius: 10px; }
   button.primary { background: var(--urgent); color: white; padding: 11px 16px; font-weight: 700; }
   button.quiet { background: #fff7ed; color: #9a3412; padding: 11px 14px; font-weight: 700; }
+  button.download { background: var(--navy); color: white; padding: 11px 14px; font-weight: 700; }
+  .priority-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 8px 0 16px; }
+  .band { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
+  .band.high { border-top: 5px solid var(--urgent); }
+  .band.medium { border-top: 5px solid var(--plan); }
+  .band.low { border-top: 5px solid var(--keep); }
+  .band h2 { margin-bottom: 6px; }
+  .prio { background: #f8fafc; border-radius: 12px; padding: 10px; margin-top: 10px; }
+  .prio h3 { margin-bottom: 4px; }
   button:disabled { opacity: 0.55; cursor: wait; }
   #status { min-height: 1.4em; color: #d9e2ec; margin: 10px 0 0; }
   #status.error { color: #fecdd3; }
@@ -184,7 +196,7 @@ _PAGE = """<!DOCTYPE html>
   details summary { cursor: pointer; font-weight: 700; }
   @media (max-width: 860px) {
     h1 { font-size: 28px; }
-    form, .stats, .grid, .lanes, .pair, .split, .bar-row { grid-template-columns: 1fr; }
+    form, .stats, .grid, .lanes, .pair, .split, .bar-row, .priority-grid { grid-template-columns: 1fr; }
     .donut { margin: 0 auto; }
     #chat { width: calc(100% - 20px); right: 10px; }
   }
@@ -219,14 +231,19 @@ _PAGE = """<!DOCTYPE html>
   <div class="wrap">
     <p class="kicker">Crypto practice dashboard</p>
     <h1>What cryptography this code is using</h1>
-    <p class="lede">Scan any project folder. The colors are the whole story: red means retire it, orange means plan it, green means keep it, blue means it is only a library or a name. Click a color or a practice to read that part. The wording comes from the scan rules. It is not a live model, and it does not prove a system is quantum-safe.</p>
+    <p class="lede">Scan a folder path, and add text or PDF files if you have them. High, medium, and low each say why it matters and what to do. Download the summary when you are done. The wording comes from the scan rules. It is not a live model, and it does not prove a system is quantum-safe.</p>
     <form id="scan-form">
       <div>
         <label for="path">Folder to scan</label>
         <input id="path" name="path" type="text" spellcheck="false" value="__DEFAULT_PATH__">
       </div>
-      <button class="primary" id="scan-btn" type="submit">Scan folder</button>
+      <button class="primary" id="scan-btn" type="submit">Scan</button>
       <button class="quiet" id="sample-btn" type="button">Use sample</button>
+      <button class="download" id="download-btn" type="button" disabled>Download report</button>
+      <div class="file-field">
+        <label for="files">Text or PDF files</label>
+        <input id="files" name="files" type="file" accept=".txt,.md,.pdf,.text,text/plain,application/pdf" multiple>
+      </div>
     </form>
     <p id="status">Choose a folder and scan it.</p>
   </div>
@@ -244,6 +261,11 @@ _PAGE = """<!DOCTYPE html>
   </div>
   <div id="mix" class="mix"></div>
   <section class="stats" id="stats"></section>
+  <section id="priorities" class="priority-grid">
+    <article class="band high"><h2>High priority</h2><p class="muted" id="intro-high"></p><div id="items-high"></div></article>
+    <article class="band medium"><h2>Medium priority</h2><p class="muted" id="intro-medium"></p><div id="items-medium"></div></article>
+    <article class="band low"><h2>Low priority</h2><p class="muted" id="intro-low"></p><div id="items-low"></div></article>
+  </section>
   <nav class="tabs">
     <button type="button" class="active" data-tab="picture">Picture</button>
     <button type="button" data-tab="update">What to update</button>
@@ -424,6 +446,7 @@ function paint() {
   paintBars(document.getElementById("concern-chart"), practiceSeries, (item) => ({ urgent: "#e11d48", plan: "#ea580c", monitor: "#059669", informational: "#2563eb" }[item.key] || "#64748b"));
   paintBars(document.getElementById("usage-chart"), data.charts.usage, (_item, index) => HUES[index % HUES.length]);
   paintBars(document.getElementById("file-chart"), data.charts.files, (_item, index) => HUES[index % HUES.length]);
+  paintPriorities();
   const notes = data.findings.filter((item) => item.confidence !== "confirmed");
   if (filter === "uncertain") {
     document.getElementById("lanes").innerHTML = `<section class="lane" style="background:#f5f3ff"><header><i class="dot uncertain"></i><h3>Comments, not confirmed use</h3><b>${notes.length}</b></header><p class="muted">Do not schedule a migration from a comment.</p><div class="hits">${notes.map((item) => `<article class="hit uncertain"><strong>${esc(item.name)}</strong><p>${esc(item.plain)}</p>${codeBlock(item.where, item.snippet)}</article>`).join("") || "<p class='muted'>None in this folder.</p>"}</div></section>`;
@@ -470,6 +493,63 @@ function paint() {
     return `<article class="hit ${tone}"><div class="hit-top"><strong>${esc(item.name)}</strong><span class="pill ${tone}">${esc(TONE[tone] || tone)}</span></div><p>${esc(item.plain)}</p>${codeBlock(item.where, item.snippet)}</article>`;
   }).join("") || "<p class='muted'>Nothing in this filter.</p>";
 }
+function paintPriorities() {
+  const bands = current.priorities || [];
+  bands.forEach((band) => {
+    const intro = document.getElementById("intro-" + band.key);
+    const box = document.getElementById("items-" + band.key);
+    if (!intro || !box) return;
+    intro.textContent = band.intro;
+    box.innerHTML = band.items.length ? band.items.map((item) => `
+        <div class="prio">
+          <h3>${esc(item.name)}</h3>
+          <p><b>Reason.</b> ${esc(item.reason)}</p>
+          <p><b>What to do.</b> ${esc(item.action)}</p>
+          ${(item.locations || []).slice(0, 3).map((spot) => codeBlock(spot.line ? spot.path + ":" + spot.line : spot.path, spot.snippet)).join("")}
+        </div>
+      `).join("") : "<p class='muted'>Nothing in this group.</p>";
+  });
+}
+function reportMarkdown(data) {
+  const lines = [
+    "# Cryptography analysis summary",
+    "",
+    data.headline,
+    "",
+    "Scanned: " + data.root,
+    "Files: " + data.files_scanned,
+    "",
+    data.disclaimer,
+    "",
+    "This report does not prove a system is quantum-safe.",
+    ""
+  ];
+  (data.priorities || []).forEach((band) => {
+    lines.push("## " + band.title, "", band.intro, "");
+    if (!band.items.length) {
+      lines.push("Nothing in this group.", "");
+      return;
+    }
+    band.items.forEach((item) => {
+      lines.push("### " + item.name, "", "Reason: " + item.reason, "", "What to do: " + item.action, "");
+      (item.locations || []).forEach((spot) => {
+        lines.push("- " + (spot.line ? spot.path + ":" + spot.line : spot.path));
+        if (spot.snippet) lines.push("  " + spot.snippet);
+      });
+      lines.push("");
+    });
+  });
+  return lines.join("\\n");
+}
+function downloadReport() {
+  if (!current) return;
+  const blob = new Blob([reportMarkdown(current)], { type: "text/markdown" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "crypto-analysis-report.md";
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
 function openTile(token) {
   const [key, indexText] = token.split(":");
   const group = current.standards.find((item) => item.key === key);
@@ -509,6 +589,7 @@ function render(data) {
   document.getElementById("checks").innerHTML = data.checks.map((item) => `<li>${esc(item)}</li>`).join("");
   document.getElementById("limits").innerHTML = data.limitations.map((item) => `<li>${esc(item)}</li>`).join("");
   document.getElementById("truncated").hidden = !data.findings_truncated;
+  document.getElementById("download-btn").disabled = false;
   document.getElementById("detail").hidden = true;
   paint();
 }
@@ -540,17 +621,36 @@ document.getElementById("more-reading").addEventListener("click", () => {
   const box = document.getElementById("narrative");
   box.hidden = !box.hidden;
 });
+function readFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result || "");
+      const comma = text.indexOf(",");
+      resolve({ name: file.name, data: comma >= 0 ? text.slice(comma + 1) : "" });
+    };
+    reader.onerror = () => reject(new Error("Could not read " + file.name));
+    reader.readAsDataURL(file);
+  });
+}
 async function scan(path) {
   filter = "all";
   status.className = "";
-  status.textContent = "Scanning " + path + " …";
   scanBtn.disabled = true;
   dashboard.hidden = true;
   try {
+    const picked = Array.from(document.getElementById("files").files || []);
+    const files = [];
+    for (const file of picked) {
+      if (file.size > 1500000) throw new Error(file.name + " is larger than 1.5 MB.");
+      files.push(await readFile(file));
+    }
+    if (!path && !files.length) throw new Error("Enter a folder path or upload a text or PDF file.");
+    status.textContent = files.length ? "Scanning the folder and uploaded files …" : "Scanning " + path + " …";
     const response = await fetch("/api/scan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path })
+      body: JSON.stringify({ path, files })
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Scan failed");
@@ -569,8 +669,10 @@ document.getElementById("scan-form").addEventListener("submit", (event) => {
 });
 document.getElementById("sample-btn").addEventListener("click", () => {
   input.value = SAMPLE;
+  document.getElementById("files").value = "";
   scan(SAMPLE);
 });
+document.getElementById("download-btn").addEventListener("click", downloadReport);
 if (input.value.trim()) scan(input.value.trim());
 
 const chat = document.getElementById("chat");
@@ -711,7 +813,8 @@ def serve_platform(scan_root: Path, host: str = "127.0.0.1", port: int = 8765) -
                 self.send_error(404)
                 return
             length = int(self.headers.get("Content-Length", "0") or "0")
-            if length > 8192:
+            limit = 8_000_000 if parsed.path == "/api/scan" else 8192
+            if length > limit:
                 self._json(400, {"error": "That request is too long."})
                 return
             raw_body = self.rfile.read(length).decode("utf-8", errors="replace")
@@ -726,7 +829,8 @@ def serve_platform(scan_root: Path, host: str = "127.0.0.1", port: int = 8765) -
             if parsed.path == "/api/ask":
                 self._ask(str(document.get("question", "")))
                 return
-            self._scan(str(document.get("path", "")))
+            uploaded = document.get("files")
+            self._scan(str(document.get("path", "")), uploaded if isinstance(uploaded, list) else [])
 
         def _ask(self, question: str) -> None:
             if not question.strip():
@@ -739,12 +843,9 @@ def serve_platform(scan_root: Path, host: str = "127.0.0.1", port: int = 8765) -
                 return
             self._json(200, {"answer": answer_question(analysis, question)})
 
-        def _scan(self, raw: str) -> None:
-            if not raw.strip():
-                self._json(400, {"error": "Enter a folder path."})
-                return
+        def _scan(self, raw: str, files: list | None = None) -> None:
             try:
-                payload = analyze_directory(raw)
+                payload = scan_inputs(raw, files or [])
             except ScanRequestError as exc:
                 self._json(400, {"error": str(exc)})
                 return

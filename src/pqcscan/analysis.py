@@ -275,7 +275,7 @@ def build_analysis(result: ScanResult) -> dict:
 
     urgent_names = [entry.mechanism for entry in by_concern["urgent"]]
     plan_names = [entry.mechanism for entry in by_concern["plan"]]
-    return {
+    analysis = {
         "root": result.root,
         "files_scanned": result.files_scanned,
         "files_skipped": result.files_skipped,
@@ -314,7 +314,66 @@ def build_analysis(result: ScanResult) -> dict:
         "limitations": list(result.limitations)[:8],
         "findings": findings,
         "findings_truncated": len(result.findings) > len(findings),
+        "priorities": _priorities(standards, updates, uncertain),
     }
+    return analysis
+
+
+def _priorities(standards: list[dict], updates: list[dict], uncertain: list) -> list[dict]:
+    actions = {item["title"]: item["action"] for item in updates}
+    bands = (
+        (
+            "high",
+            "High priority",
+            ("urgent",),
+            "Retire these first. Published guidance already treats them as obsolete.",
+        ),
+        (
+            "medium",
+            "Medium priority",
+            ("plan",),
+            "These still work at modern sizes. Plan a later move. A longer classical key is not a post-quantum fix.",
+        ),
+        (
+            "low",
+            "Low priority",
+            ("monitor", "informational"),
+            "Ordinary choices, or a library name only. Keep an owner, or confirm the name is actually used.",
+        ),
+    )
+    rows = []
+    for key, title, concerns, intro in bands:
+        items = []
+        for group in standards:
+            if group["key"] not in concerns:
+                continue
+            for entry in group["items"]:
+                items.append(
+                    {
+                        "name": entry["name"],
+                        "reason": entry["plain"],
+                        "action": actions.get(entry["name"]) or group["guidance"],
+                        "locations": entry.get("locations") or [],
+                    }
+                )
+        if key == "low":
+            for finding in uncertain[:8]:
+                evidence = finding.evidence[0] if finding.evidence else None
+                spots = []
+                if evidence is not None:
+                    spots.append(
+                        {"path": evidence.path, "line": evidence.line, "snippet": evidence.snippet}
+                    )
+                items.append(
+                    {
+                        "name": finding.name,
+                        "reason": "This is a comment or an uncertain match. It is not confirmed code.",
+                        "action": "A person should confirm or dismiss it. Do not schedule a migration from a comment.",
+                        "locations": spots,
+                    }
+                )
+        rows.append({"key": key, "title": title, "intro": intro, "items": items})
+    return rows
 
 
 def analyze_directory(raw: str) -> dict:
